@@ -82,7 +82,7 @@ class _MergePdfScreenState extends State<MergePdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menggabungkan: $e')),
+          SnackBar(content: Text('Gagal menggabungkan: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

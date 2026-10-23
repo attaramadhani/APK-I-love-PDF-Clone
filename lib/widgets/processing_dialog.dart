@@ -11,20 +11,38 @@ class ProcessingDialog extends StatelessWidget {
     this.message = 'Mohon tunggu sebentar...',
   });
 
+  static bool _isShowing = false;
+  static int _token = 0;
+
+  /// Menampilkan dialog loading. Aman dipanggil berulang (tidak menumpuk).
   static void show(BuildContext context, {required String title, String? message}) {
+    if (_isShowing) return;
+    _isShowing = true;
+    final myToken = ++_token;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => ProcessingDialog(
-        title: title,
-        message: message ?? 'Mohon tunggu sebentar...',
+      useRootNavigator: true,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: ProcessingDialog(
+          title: title,
+          message: message ?? 'Mohon tunggu sebentar...',
+        ),
       ),
-    );
+    ).whenComplete(() {
+      if (myToken == _token) _isShowing = false;
+    });
   }
 
+  /// Menutup dialog loading HANYA bila sedang tampil, sehingga tidak pernah
+  /// menutup halaman alat secara tidak sengaja.
   static void hide(BuildContext context) {
-    if (Navigator.canPop(context)) {
-      Navigator.pop(context);
+    if (!_isShowing) return;
+    _isShowing = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
     }
   }
 

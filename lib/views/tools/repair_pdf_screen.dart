@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
@@ -43,14 +43,9 @@ class _RepairPdfScreenState extends State<RepairPdfScreen> {
     );
 
     try {
-      final bytes = await _selectedFile!.readAsBytes();
-      // Membaca dan merekonstruksi struktur PDF melalui parser internal Syncfusion
-      final doc = PdfDocument(inputBytes: bytes);
-      final repairedBytes = await doc.save();
-      doc.dispose();
-
-      final outputPath = await FileHelper.generateOutputPath('Repaired');
-      await File(outputPath).writeAsBytes(repairedBytes);
+      // Parser Syncfusion membaca ulang seluruh objek lalu menulis struktur
+      // xref & stream yang baru (bukan pembaruan inkremental).
+      final outputPath = await PdfEngineService.optimizePdf(_selectedFile!, prefix: 'Repaired');
 
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
@@ -82,7 +77,7 @@ class _RepairPdfScreenState extends State<RepairPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memperbaiki berkas: Kerusakan data terlalu parah ($e)')),
+          SnackBar(content: Text('Gagal memperbaiki berkas: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

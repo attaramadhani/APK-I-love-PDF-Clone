@@ -1,12 +1,10 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/utils/file_helper.dart';
 import '../../models/processed_file.dart';
 import '../../widgets/processing_dialog.dart';
 import '../viewer/pdf_viewer_screen.dart';
@@ -31,10 +29,18 @@ class _RotatePdfScreenState extends State<RotatePdfScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -80,7 +86,7 @@ class _RotatePdfScreenState extends State<RotatePdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memutar PDF: $e')),
+          SnackBar(content: Text('Gagal memutar PDF: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

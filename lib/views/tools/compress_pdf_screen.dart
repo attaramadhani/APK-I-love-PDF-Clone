@@ -1,8 +1,9 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
+import '../../core/services/raster_pdf_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
@@ -44,30 +45,50 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
     );
 
     try {
-      final bytes = await _selectedFile!.readAsBytes();
-      final document = PdfDocument(inputBytes: bytes);
+      final originalSize = _selectedFile!.lengthSync();
 
-      // Tingkat optimasi kompresi
-      switch (_compressionLevel) {
-        case 2: // Ekstrem
-          document.compressionLevel = PdfCompressionLevel.best;
-          break;
-        case 1: // Rekomendasi
-          document.compressionLevel = PdfCompressionLevel.normal;
-          break;
-        default: // Ringan
-          document.compressionLevel = PdfCompressionLevel.belowNormal;
+      // Tahap 1: optimasi lossless (teks tetap bisa dipilih/dicari).
+      String bestPath = await PdfEngineService.optimizePdf(_selectedFile!);
+      int bestSize = File(bestPath).lengthSync();
+
+      // Tahap 2 (Rekomendasi/Maksimal): render ulang halaman menjadi JPEG
+      // beresolusi lebih rendah. Sangat efektif untuk hasil scan & foto.
+      // Hasil terkecil yang dipakai, sehingga file tidak pernah membesar.
+      if (_compressionLevel > 0) {
+        final double dpi = _compressionLevel == 2 ? 96 : 144;
+        final int quality = _compressionLevel == 2 ? 50 : 72;
+        try {
+          final rasterPath = await RasterPdfService.rasterizePdf(
+            _selectedFile!,
+            prefix: 'Compressed',
+            dpi: dpi,
+            jpegQuality: quality,
+          );
+          final rasterSize = File(rasterPath).lengthSync();
+          // Untuk Rekomendasi, hanya ganti ke versi gambar bila hematnya signifikan
+          // (>30%), agar dokumen teks biasa tetap bisa dicari/disalin.
+          final threshold = _compressionLevel == 2 ? 1.0 : 0.7;
+          if (rasterSize < bestSize * threshold) {
+            await File(bestPath).delete();
+            bestPath = rasterPath;
+            bestSize = rasterSize;
+          } else {
+            await File(rasterPath).delete();
+          }
+        } catch (_) {
+          // Bila render gagal, tetap gunakan hasil optimasi lossless.
+        }
       }
 
-      final savedBytes = await document.save();
-      document.dispose();
+      // Jangan pernah memberikan hasil yang lebih besar dari aslinya.
+      if (bestSize >= originalSize) {
+        await File(bestPath).writeAsBytes(await _selectedFile!.readAsBytes());
+        bestSize = originalSize;
+      }
 
-      final outputPath = await FileHelper.generateOutputPath('Compressed');
-      await File(outputPath).writeAsBytes(savedBytes);
-
+      final outputPath = bestPath;
       final outputFile = File(outputPath);
-      final originalSize = _selectedFile!.lengthSync();
-      final newSize = outputFile.lengthSync();
+      final newSize = bestSize;
 
       final processedFile = ProcessedFile(
         id: const Uuid().v4(),
@@ -88,7 +109,7 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal mengompres PDF: $e')),
+          SnackBar(content: Text('Gagal mengompres PDF: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }
@@ -141,7 +162,12 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Text('Ukuran berhasil dihemat sebesar $reduction%. Berkas siap digunakan!', style: const TextStyle(fontSize: 13)),
+            Text(
+              reduction > 0
+                  ? 'Ukuran berhasil dihemat sebesar $reduction%. Berkas siap digunakan!'
+                  : 'Dokumen ini sudah optimal, ukurannya tidak bisa diperkecil lagi tanpa merusak isi. Coba tingkat "Maksimal" bila belum.',
+              style: const TextStyle(fontSize: 13),
+            ),
           ],
         ),
         actions: [
@@ -242,11 +268,11 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
                   const SizedBox(height: 28),
                   const Text('Pilih Tingkat Kompresi', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
-                  _buildLevelTile(0, 'Kompresi Ringan', 'Kualitas gambar tinggi, kompresi sedikit lebih kecil.'),
+                  _buildLevelTile(0, 'Kompresi Ringan', 'Optimasi struktur tanpa mengubah isi. Teks tetap bisa dipilih & dicari.'),
                   const SizedBox(height: 10),
-                  _buildLevelTile(1, 'Kompresi Rekomendasi (Terbaik)', 'Keseimbangan optimal antara ukuran kecil dan kualitas tetap jelas.'),
+                  _buildLevelTile(1, 'Kompresi Rekomendasi (Terbaik)', 'Gambar halaman dikompres 144 DPI. Sangat efektif untuk hasil scan/foto; otomatis memilih hasil terkecil.'),
                   const SizedBox(height: 10),
-                  _buildLevelTile(2, 'Kompresi Maksimal', 'Ukuran sekecil mungkin, cocok untuk syarat upload file ketat.'),
+                  _buildLevelTile(2, 'Kompresi Maksimal', 'Ukuran sekecil mungkin (96 DPI) untuk syarat upload ketat. Teks hasil bisa menjadi gambar.'),
                   const SizedBox(height: 36),
                   SizedBox(
                     width: double.infinity,

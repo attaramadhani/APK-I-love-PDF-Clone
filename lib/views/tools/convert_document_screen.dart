@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/document_convert_service.dart';
 import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
@@ -32,7 +32,7 @@ class _ConvertDocumentScreenState extends State<ConvertDocumentScreen> {
     if (widget.mode == 'to_word' || widget.mode == 'to_excel') {
       return ['pdf'];
     } else {
-      return ['doc', 'docx', 'xls', 'xlsx', 'txt', 'csv'];
+      return widget.title.toLowerCase().contains('excel') ? ['xlsx', 'csv'] : ['docx', 'txt'];
     }
   }
 
@@ -89,9 +89,11 @@ class _ConvertDocumentScreenState extends State<ConvertDocumentScreen> {
         toolName = 'PDF ke Word';
       } else if (widget.mode == 'to_excel') {
         // PDF ke Excel (.csv berstruktur tabel)
-        final text = await PdfEngineService.extractText(_selectedFile!);
+        // layout: true mempertahankan jarak antarkolom sehingga tabel bisa dipecah
+        final text = await PdfEngineService.extractText(_selectedFile!, layout: true);
         final lines = text.split('\n');
-        final csvContent = StringBuffer();
+        // BOM UTF-8 agar Excel membaca karakter khusus dengan benar
+        final csvContent = StringBuffer('\uFEFF');
         for (var line in lines) {
           if (line.trim().isNotEmpty) {
             final cells = line.split(RegExp(r'\s{2,}|\t'));
@@ -102,62 +104,8 @@ class _ConvertDocumentScreenState extends State<ConvertDocumentScreen> {
         await File(outputPath).writeAsString(csvContent.toString());
         toolName = 'PDF ke Excel';
       } else {
-        // Dokumen ke PDF
-        String contentText = '';
-        try {
-          contentText = await _selectedFile!.readAsString();
-        } catch (_) {
-          // Bila berkas biner (misal docx/xlsx), bersihkan tag XML
-          final bytes = await _selectedFile!.readAsBytes();
-          final raw = String.fromCharCodes(bytes);
-          final matches = RegExp(r'<w:t[^>]*>(.*?)</w:t>').allMatches(raw);
-          if (matches.isNotEmpty) {
-            contentText = matches.map((m) => m.group(1)).join(' ');
-          } else {
-            contentText = raw.replaceAll(RegExp(r'[^\x20-\x7E\n\r]'), ' ').trim();
-          }
-        }
-
-        final doc = PdfDocument();
-        final fontTitle = PdfStandardFont(PdfFontFamily.helvetica, 16, style: PdfFontStyle.bold);
-        final fontBody = PdfStandardFont(PdfFontFamily.helvetica, 11);
-
-        final page = doc.pages.add();
-        final clientSize = page.getClientSize();
-
-        page.graphics.drawRectangle(
-          brush: PdfSolidBrush(PdfColor(255, 255, 255)),
-          bounds: Rect.fromLTWH(0, 0, clientSize.width, clientSize.height),
-        );
-
-        page.graphics.drawString(
-          baseName,
-          fontTitle,
-          brush: PdfSolidBrush(PdfColor(37, 99, 235)),
-          bounds: Rect.fromLTWH(0, 0, clientSize.width, 25),
-        );
-
-        page.graphics.drawLine(
-          PdfPen(PdfColor(226, 232, 240), width: 1),
-          const Offset(0, 30),
-          Offset(clientSize.width, 30),
-        );
-
-        final layout = PdfTextElement(
-          text: contentText.isNotEmpty ? contentText : 'Dokumen berhasil dikonversi dari $fileName.',
-          font: fontBody,
-        );
-
-        layout.draw(
-          page: page,
-          bounds: Rect.fromLTWH(0, 45, clientSize.width, clientSize.height - 55),
-        );
-
-        final bytes = await doc.save();
-        doc.dispose();
-
-        outputPath = await FileHelper.generateOutputPath('${baseName}_Converted');
-        await File(outputPath).writeAsBytes(bytes);
+        // Dokumen (DOCX/XLSX/CSV/TXT) ke PDF
+        outputPath = await DocumentConvertService.convertToPdf(_selectedFile!);
         toolName = 'Konversi ke PDF';
       }
 
@@ -197,7 +145,7 @@ class _ConvertDocumentScreenState extends State<ConvertDocumentScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal mengonversi dokumen: $e')),
+          SnackBar(content: Text('Gagal mengonversi dokumen: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

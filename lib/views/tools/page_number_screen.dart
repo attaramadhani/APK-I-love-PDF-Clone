@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
@@ -32,10 +31,18 @@ class _PageNumberScreenState extends State<PageNumberScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -87,7 +94,7 @@ class _PageNumberScreenState extends State<PageNumberScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menambahkan nomor halaman: $e')),
+          SnackBar(content: Text('Gagal menambahkan nomor halaman: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

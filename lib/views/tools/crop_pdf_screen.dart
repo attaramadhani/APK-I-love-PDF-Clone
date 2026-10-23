@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
@@ -35,10 +35,18 @@ class _CropPdfScreenState extends State<CropPdfScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -76,38 +84,13 @@ class _CropPdfScreenState extends State<CropPdfScreen> {
     );
 
     try {
-      final bytes = await _selectedFile!.readAsBytes();
-      final sourceDoc = PdfDocument(inputBytes: bytes);
-      final outputDoc = PdfDocument();
-
-      for (int i = 0; i < sourceDoc.pages.count; i++) {
-        final sourcePage = sourceDoc.pages[i];
-        final origSize = sourcePage.size;
-
-        final newWidth = (origSize.width - _cropLeft - _cropRight).clamp(50.0, origSize.width);
-        final newHeight = (origSize.height - _cropTop - _cropBottom).clamp(50.0, origSize.height);
-        final newSize = Size(newWidth, newHeight);
-
-        final section = outputDoc.sections!.add();
-        section.pageSettings.size = newSize;
-        section.pageSettings.margins.all = 0;
-
-        final newPage = section.pages.add();
-        newPage.graphics.drawRectangle(
-          brush: PdfSolidBrush(PdfColor(255, 255, 255)),
-          bounds: Rect.fromLTWH(0, 0, newSize.width, newSize.height),
-        );
-        final template = sourcePage.createTemplate();
-        // Geser konten ke kiri dan atas sebesar margin yang dipotong
-        newPage.graphics.drawPdfTemplate(template, Offset(-_cropLeft, -_cropTop), origSize);
-      }
-
-      final savedBytes = await outputDoc.save();
-      outputDoc.dispose();
-      sourceDoc.dispose();
-
-      final outputPath = await FileHelper.generateOutputPath('Cropped');
-      await File(outputPath).writeAsBytes(savedBytes);
+      final outputPath = await PdfEngineService.cropPdf(
+        _selectedFile!,
+        top: _cropTop,
+        bottom: _cropBottom,
+        left: _cropLeft,
+        right: _cropRight,
+      );
 
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
@@ -136,7 +119,7 @@ class _CropPdfScreenState extends State<CropPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memotong dokumen: $e')),
+          SnackBar(content: Text('Gagal memotong dokumen: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

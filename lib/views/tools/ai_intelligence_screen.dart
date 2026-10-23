@@ -56,7 +56,7 @@ class _AiIntelligenceScreenState extends State<AiIntelligenceScreen> {
         if (mounted) {
           ProcessingDialog.hide(context);
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gagal mengekstrak teks: $e')),
+            SnackBar(content: Text('Gagal mengekstrak teks: ${PdfEngineService.friendlyError(e)}')),
           );
         }
       }
@@ -136,7 +136,7 @@ class _AiIntelligenceScreenState extends State<AiIntelligenceScreen> {
   Future<void> _runAi() async {
     if (_extractedText.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Teks dokumen kosong atau tidak terdeteksi')),
+        const SnackBar(content: Text('Dokumen tidak memiliki lapisan teks (kemungkinan hasil scan). Gunakan alat "OCR PDF" terlebih dahulu.')),
       );
       return;
     }
@@ -174,7 +174,7 @@ class _AiIntelligenceScreenState extends State<AiIntelligenceScreen> {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error AI: $e (Menampilkan hasil lokal)'),
+            content: Text('${e.toString().replaceFirst('Exception: ', '')} — menampilkan hasil mode offline.'),
             action: SnackBarAction(
               label: 'Mode Offline',
               onPressed: _runOffline,

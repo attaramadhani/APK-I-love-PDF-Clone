@@ -1,12 +1,12 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
+import '../../core/utils/page_range_parser.dart';
 import '../../models/processed_file.dart';
 import '../../widgets/processing_dialog.dart';
 import '../viewer/pdf_viewer_screen.dart';
@@ -31,10 +31,18 @@ class _RemovePagesScreenState extends State<RemovePagesScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -43,35 +51,8 @@ class _RemovePagesScreenState extends State<RemovePagesScreen> {
     }
   }
 
-  List<int> _parsePagesToRemove(String input, int maxPages) {
-    final Set<int> indices = {};
-    final parts = input.split(',');
-
-    for (var part in parts) {
-      part = part.trim();
-      if (part.contains('-')) {
-        final range = part.split('-');
-        if (range.length == 2) {
-          final start = int.tryParse(range[0].trim());
-          final end = int.tryParse(range[1].trim());
-          if (start != null && end != null) {
-            for (int i = start; i <= end; i++) {
-              if (i >= 1 && i <= maxPages) {
-                indices.add(i - 1);
-              }
-            }
-          }
-        }
-      } else {
-        final page = int.tryParse(part);
-        if (page != null && page >= 1 && page <= maxPages) {
-          indices.add(page - 1);
-        }
-      }
-    }
-
-    return indices.toList();
-  }
+  List<int> _parsePagesToRemove(String input, int maxPages) =>
+      PageRangeParser.parseGroup(input.replaceAll(';', ','), maxPages);
 
   Future<void> _executeRemovePages() async {
     if (_selectedFile == null) return;
@@ -126,7 +107,7 @@ class _RemovePagesScreenState extends State<RemovePagesScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menghapus halaman: $e')),
+          SnackBar(content: Text('Gagal menghapus halaman: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

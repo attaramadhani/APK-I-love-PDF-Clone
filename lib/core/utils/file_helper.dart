@@ -35,6 +35,53 @@ class FileHelper {
     return p.join(dirPath, '${prefix}_$timestamp$ext');
   }
 
+  /// MIME type berdasarkan ekstensi berkas.
+  static String mimeTypeFor(String fileName) {
+    final ext = p.extension(fileName).toLowerCase();
+    switch (ext) {
+      case '.pdf':
+        return 'application/pdf';
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.txt':
+        return 'text/plain';
+      case '.md':
+        return 'text/markdown';
+      case '.csv':
+        return 'text/csv';
+      case '.doc':
+        return 'application/msword';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  /// Menyalin berkas ke folder Download publik dengan nama unik (tidak menimpa).
+  static Future<String?> _copyToPublicDownload(File file, String fileName) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final downloadDir = Directory('/storage/emulated/0/Download/PDF Studio Pro');
+      if (!await downloadDir.exists()) {
+        await downloadDir.create(recursive: true);
+      }
+      final base = p.basenameWithoutExtension(fileName);
+      final ext = p.extension(fileName);
+      var dest = File(p.join(downloadDir.path, fileName));
+      var n = 1;
+      while (await dest.exists()) {
+        dest = File(p.join(downloadDir.path, '$base ($n)$ext'));
+        n++;
+      }
+      await file.copy(dest.path);
+      return dest.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Tombol & aksi resmi: Simpan Berkas ke Penyimpanan Lokal (Download / Storage HP)
   static Future<bool> saveToLocalDevice(
     BuildContext context, {
@@ -55,25 +102,20 @@ class FileHelper {
       final fileName = preferredName ?? file.uri.pathSegments.last;
       final Uint8List bytes = await file.readAsBytes();
 
-      // 1. Simpan via Storage Access Framework (SAF) - pengguna bisa memilih folder tujuan
-      final uri = await FilePicker.saveFile(
-        fileName: fileName,
-        bytes: bytes,
-        mimeType: fileName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
-        dialogTitle: 'Simpan ke File Lokal',
-      );
-
-      // 2. Jika di Android, salin juga ke folder Download publik perangkat jika tersedia
+      // Simpan via Storage Access Framework (SAF): pengguna memilih folder tujuan.
+      // Bila pengguna membatalkan dialog, JANGAN menyalin diam-diam ke tempat lain.
+      Uri? uri;
       String? publicDownloadPath;
-      if (Platform.isAndroid) {
-        try {
-          final downloadDir = Directory('/storage/emulated/0/Download');
-          if (await downloadDir.exists()) {
-            final destFile = File(p.join(downloadDir.path, fileName));
-            await file.copy(destFile.path);
-            publicDownloadPath = destFile.path;
-          }
-        } catch (_) {}
+      try {
+        uri = await FilePicker.saveFile(
+          fileName: fileName,
+          bytes: bytes,
+          mimeType: mimeTypeFor(fileName),
+          dialogTitle: 'Simpan ke File Lokal',
+        );
+      } catch (_) {
+        // Fallback hanya bila dialog SAF tidak tersedia di perangkat.
+        publicDownloadPath = await _copyToPublicDownload(file, fileName);
       }
 
       final isSuccess = uri != null || publicDownloadPath != null;
@@ -92,7 +134,7 @@ class FileHelper {
                   child: Text(
                     isSuccess
                         ? (publicDownloadPath != null
-                            ? 'Berkas berhasil disimpan ke folder Download & lokal!'
+                            ? 'Berkas disimpan ke Download/PDF Studio Pro'
                             : 'Berkas berhasil disimpan ke penyimpanan lokal!')
                         : 'Penyimpanan berkas dibatalkan.',
                   ),
@@ -123,34 +165,23 @@ class FileHelper {
   }) async {
     int savedCount = 0;
     try {
-      if (Platform.isAndroid) {
-        final downloadDir = Directory('/storage/emulated/0/Download');
-        if (!await downloadDir.exists()) {
-          await downloadDir.create(recursive: true);
+      for (final path in filePaths) {
+        final file = File(path);
+        if (!await file.exists()) continue;
+        final fileName = file.uri.pathSegments.last;
+        // Coba salin langsung ke Download/PDF Studio Pro (Android 10+ tidak perlu izin).
+        var saved = await _copyToPublicDownload(file, fileName) != null;
+        if (!saved) {
+          // Fallback: dialog simpan per berkas.
+          final uri = await FilePicker.saveFile(
+            fileName: fileName,
+            bytes: await file.readAsBytes(),
+            mimeType: mimeTypeFor(fileName),
+            dialogTitle: 'Simpan $fileName',
+          );
+          saved = uri != null;
         }
-        for (final path in filePaths) {
-          final file = File(path);
-          if (await file.exists()) {
-            final fileName = file.uri.pathSegments.last;
-            final destPath = p.join(downloadDir.path, fileName);
-            await file.copy(destPath);
-            savedCount++;
-          }
-        }
-      } else {
-        for (final path in filePaths) {
-          final file = File(path);
-          if (await file.exists()) {
-            final fileName = file.uri.pathSegments.last;
-            final bytes = await file.readAsBytes();
-            await FilePicker.saveFile(
-              fileName: fileName,
-              bytes: bytes,
-              dialogTitle: 'Simpan $fileName',
-            );
-            savedCount++;
-          }
-        }
+        if (saved) savedCount++;
       }
 
       if (context.mounted) {
@@ -162,7 +193,7 @@ class FileHelper {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '$savedCount berkas berhasil disimpan ke folder Download perangkat!',
+                    '$savedCount dari ${filePaths.length} berkas tersimpan (Download/PDF Studio Pro)',
                   ),
                 ),
               ],

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/image_pdf_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
@@ -82,7 +83,7 @@ class _ImageToPdfScreenState extends State<ImageToPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal konversi ke PDF: $e')),
+          SnackBar(content: Text('Gagal konversi ke PDF: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

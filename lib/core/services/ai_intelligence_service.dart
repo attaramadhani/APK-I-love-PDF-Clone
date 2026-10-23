@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,44 +26,68 @@ class AiIntelligenceService {
       );
     }
 
-    final models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash'];
+    // Model aktif per Oktober 2026 (gemini-1.5 & 2.0 sudah dimatikan Google).
+    // Dicoba berurutan; berpindah ke model berikutnya hanya bila model tidak
+    // tersedia atau server sibuk.
+    const models = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'];
     String lastError = '';
 
     for (final model in models) {
       try {
         final url = Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
+          'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent',
         );
 
-        final response = await http.post(
-          url,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'contents': [
-              {
-                'parts': [
-                  {'text': prompt}
+        final response = await http
+            .post(
+              url,
+              headers: {
+                'Content-Type': 'application/json',
+                // Kunci dikirim lewat header, bukan URL, agar tidak tercatat di log.
+                'x-goog-api-key': apiKey,
+              },
+              body: jsonEncode({
+                'contents': [
+                  {
+                    'parts': [
+                      {'text': prompt}
+                    ]
+                  }
                 ]
-              }
-            ]
-          }),
-        ).timeout(const Duration(seconds: 25));
+              }),
+            )
+            .timeout(const Duration(seconds: 90));
 
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final text = data['candidates']?[0]?['content']?['parts']?[0]?['text'];
-          if (text != null && text.toString().trim().isNotEmpty) {
-            return text.toString().trim();
-          }
+          final data = jsonDecode(utf8.decode(response.bodyBytes));
+          final parts = data['candidates']?[0]?['content']?['parts'] as List?;
+          final text = parts?.map((p) => p['text'] ?? '').join().trim() ?? '';
+          if (text.isNotEmpty) return text;
+          lastError = 'Respons AI kosong (mungkin diblokir filter keamanan).';
+        } else if (response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403) {
+          throw Exception('Kunci API Gemini tidak valid atau tidak punya akses. Periksa kembali di Pengaturan.');
+        } else if (response.statusCode == 429) {
+          lastError = 'Kuota API habis / terlalu banyak permintaan. Coba lagi beberapa saat.';
         } else {
-          lastError = '(${response.statusCode}) ${response.body}';
+          lastError = 'Server AI ($model) merespons kode ${response.statusCode}.';
         }
-      } catch (e) {
-        lastError = e.toString();
+      } on TimeoutException {
+        lastError = 'Waktu habis menunggu respons AI. Periksa koneksi internet.';
+      } on SocketException {
+        throw Exception('Tidak ada koneksi internet.');
       }
     }
 
-    throw Exception('Gagal menghubungi Google Gemini AI: $lastError');
+    throw Exception('Gagal menghubungi Google Gemini AI. $lastError');
+  }
+
+  /// Batas karakter yang dikirim ke AI agar tidak melebihi batas permintaan.
+  static const int maxChars = 120000;
+
+  static String _limit(String text) {
+    final clean = text.trim();
+    if (clean.length <= maxChars) return clean;
+    return '${clean.substring(0, maxChars)}\n\n[... teks dipotong karena terlalu panjang ...]';
   }
 
   /// Ringkasan AI (Online via Gemini)
@@ -74,7 +100,7 @@ Sajikan dengan format:
 3. Kesimpulan Akhir
 
 Teks Dokumen:
-$pdfText
+${_limit(pdfText)}
 ''';
     return await generateAiResponse(prompt);
   }
@@ -86,7 +112,7 @@ Terjemahkan teks dokumen berikut secara akurat ke bahasa: $targetLanguage.
 Pertahankan struktur judul, paragraf, daftar isi, dan istilah teknis dengan tepat.
 
 Teks Dokumen:
-$pdfText
+${_limit(pdfText)}
 ''';
     return await generateAiResponse(prompt);
   }
@@ -97,7 +123,7 @@ $pdfText
 Konversikan teks dokumen mentah berikut menjadi dokumen format Markdown (.md) yang rapi dan terstruktur dengan heading (#, ##, ###), tabel jika ada, dan formatting yang bersih.
 
 Teks Dokumen:
-$pdfText
+${_limit(pdfText)}
 ''';
     return await generateAiResponse(prompt);
   }

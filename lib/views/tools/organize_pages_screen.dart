@@ -1,11 +1,10 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/utils/file_helper.dart';
 import '../../models/processed_file.dart';
 import '../../widgets/processing_dialog.dart';
 import '../viewer/pdf_viewer_screen.dart';
@@ -36,10 +35,18 @@ class _OrganizePagesScreenState extends State<OrganizePagesScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -84,51 +91,11 @@ class _OrganizePagesScreenState extends State<OrganizePagesScreen> {
     );
 
     try {
-      final bytes = await _selectedFile!.readAsBytes();
-      final sourceDoc = PdfDocument(inputBytes: bytes);
-      final outputDoc = PdfDocument();
-
-      for (int i = 0; i < _pages.length; i++) {
-        final item = _pages[i];
-        final sourcePage = sourceDoc.pages[item.originalIndex];
-
-        final section = outputDoc.sections!.add();
-        section.pageSettings.size = sourcePage.size;
-        section.pageSettings.margins.all = 0;
-
-        final newPage = section.pages.add();
-        newPage.graphics.drawRectangle(
-          brush: PdfSolidBrush(PdfColor(255, 255, 255)),
-          bounds: Rect.fromLTWH(0, 0, sourcePage.size.width, sourcePage.size.height),
-        );
-        final template = sourcePage.createTemplate();
-        newPage.graphics.drawPdfTemplate(template, const Offset(0, 0), sourcePage.size);
-
-        if (item.rotation != 0) {
-          PdfPageRotateAngle angle;
-          switch (item.rotation) {
-            case 90:
-              angle = PdfPageRotateAngle.rotateAngle90;
-              break;
-            case 180:
-              angle = PdfPageRotateAngle.rotateAngle180;
-              break;
-            case 270:
-              angle = PdfPageRotateAngle.rotateAngle270;
-              break;
-            default:
-              angle = PdfPageRotateAngle.rotateAngle0;
-          }
-          newPage.rotation = angle;
-        }
-      }
-
-      final savedBytes = await outputDoc.save();
-      outputDoc.dispose();
-      sourceDoc.dispose();
-
-      final outputPath = await FileHelper.generateOutputPath('Organized');
-      await File(outputPath).writeAsBytes(savedBytes);
+      final outputPath = await PdfEngineService.organizePdf(
+        _selectedFile!,
+        _pages.map((p) => p.originalIndex).toList(),
+        _pages.map((p) => p.rotation).toList(),
+      );
 
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
@@ -157,7 +124,7 @@ class _OrganizePagesScreenState extends State<OrganizePagesScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menyusun halaman: $e')),
+          SnackBar(content: Text('Gagal menyusun halaman: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

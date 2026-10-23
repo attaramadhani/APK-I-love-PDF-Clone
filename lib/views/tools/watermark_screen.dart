@@ -89,7 +89,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menambahkan tanda air: $e')),
+          SnackBar(content: Text('Gagal menambahkan tanda air: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

@@ -91,7 +91,7 @@ class _ProtectPdfScreenState extends State<ProtectPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memproses PDF: $e')),
+          SnackBar(content: Text('Gagal memproses PDF: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }

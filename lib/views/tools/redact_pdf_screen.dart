@@ -1,8 +1,9 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
+import '../../core/services/raster_pdf_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
@@ -20,7 +21,14 @@ class RedactPdfScreen extends StatefulWidget {
 class _RedactPdfScreenState extends State<RedactPdfScreen> {
   File? _selectedFile;
   int _totalPages = 0;
-  int _redactOption = 0; // 0: Bagian Atas (Header/Kop), 1: Bagian Bawah (Footer), 2: Kotak Sensor Tengah
+  int _redactOption = 0; // 0: Atas (Header/Kop), 1: Bawah (Footer), 2: Tengah, 3: Kata kunci
+  final TextEditingController _keywordController = TextEditingController();
+
+  @override
+  void dispose() {
+    _keywordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickFile() async {
     final files = await FilePicker.pickFiles(
@@ -30,10 +38,18 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
-      final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final count = doc.pages.count;
-      doc.dispose();
+      int count = 0;
+      try {
+        count = await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
 
       setState(() {
         _selectedFile = file;
@@ -52,31 +68,43 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
     );
 
     try {
-      final bytes = await _selectedFile!.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final brush = PdfSolidBrush(PdfColor(0, 0, 0));
-
-      for (int i = 0; i < doc.pages.count; i++) {
-        final page = doc.pages[i];
-        final size = page.getClientSize();
-
-        if (_redactOption == 0) {
-          // Sensor Bagian Atas (Header)
-          page.graphics.drawRectangle(brush: brush, bounds: Rect.fromLTWH(20, 20, size.width - 40, 50));
-        } else if (_redactOption == 1) {
-          // Sensor Bagian Bawah (Footer)
-          page.graphics.drawRectangle(brush: brush, bounds: Rect.fromLTWH(20, size.height - 60, size.width - 40, 40));
-        } else {
-          // Sensor Area Tengah
-          page.graphics.drawRectangle(brush: brush, bounds: Rect.fromLTWH(40, size.height / 2 - 30, size.width - 80, 60));
+      Map<int, List<Rect>> keywordBoxes = {};
+      if (_redactOption == 3) {
+        final terms = _keywordController.text.split(',');
+        keywordBoxes = await PdfEngineService.findTextBounds(_selectedFile!, terms);
+        if (keywordBoxes.isEmpty) {
+          if (mounted) {
+            ProcessingDialog.hide(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Kata/frasa tidak ditemukan di dokumen. Tidak ada yang disensor.')),
+            );
+          }
+          return;
         }
       }
 
-      final savedBytes = await doc.save();
-      doc.dispose();
-
-      final outputPath = await FileHelper.generateOutputPath('Redacted');
-      await File(outputPath).writeAsBytes(savedBytes);
+      // Redaksi PERMANEN: halaman dirender menjadi gambar dan area sensor
+      // dibakar langsung ke piksel, sehingga teks asli benar-benar terhapus
+      // (tidak bisa disalin, dicari, atau dipulihkan).
+      final option = _redactOption;
+      final outputPath = await RasterPdfService.rasterizePdf(
+        _selectedFile!,
+        prefix: 'Redacted',
+        dpi: 170,
+        jpegQuality: 88,
+        redactions: (pageIndex, size) {
+          switch (option) {
+            case 0:
+              return [Rect.fromLTWH(0, 0, size.width, size.height * 0.12)];
+            case 1:
+              return [Rect.fromLTWH(0, size.height * 0.90, size.width, size.height * 0.10)];
+            case 2:
+              return [Rect.fromLTWH(size.width * 0.08, size.height * 0.42, size.width * 0.84, size.height * 0.16)];
+            default:
+              return keywordBoxes[pageIndex] ?? const <Rect>[];
+          }
+        },
+      );
 
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
@@ -105,7 +133,7 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menyamarkan dokumen: $e')),
+          SnackBar(content: Text('Gagal menyamarkan dokumen: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }
@@ -184,6 +212,41 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
                   _buildOption(1, 'Sensor Footer (Bagian Bawah Halaman)', 'Menutup catatan kaki, metadata, atau penomoran rahasia di bagian bawah.'),
                   const SizedBox(height: 10),
                   _buildOption(2, 'Sensor Blok Tengah Dokumen', 'Menutup paragraf isi di area tengah seluruh halaman.'),
+                  const SizedBox(height: 10),
+                  _buildOption(3, 'Sensor Kata / Frasa Tertentu', 'Cari dan hitamkan otomatis nama, NIK, nomor rekening, dsb. di semua halaman.'),
+                  if (_redactOption == 3) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _keywordController,
+                      decoration: InputDecoration(
+                        labelText: 'Kata/frasa (pisahkan dengan koma)',
+                        hintText: 'Contoh: Budi Santoso, 3578xxxx, Rahasia',
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.securityNavy.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.verified_user_rounded, size: 18, color: AppColors.securityNavy),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Sensor bersifat permanen: halaman diubah menjadi gambar sehingga teks yang disensor benar-benar terhapus dan tidak bisa disalin kembali.',
+                            style: TextStyle(fontSize: 12, height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 36),
                   SizedBox(
                     width: double.infinity,

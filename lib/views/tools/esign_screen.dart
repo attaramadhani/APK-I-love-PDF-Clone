@@ -1,10 +1,10 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
@@ -23,6 +23,10 @@ class _EsignScreenState extends State<EsignScreen> {
   File? _selectedFile;
   final List<List<Offset>> _lines = [];
   Color _selectedColor = Colors.black;
+  Size _canvasSize = const Size(400, 220);
+  bool _isDrawing = false;
+  String _pageMode = 'last'; // last | first | all
+  String _position = 'bottom_right'; // bottom_right | bottom_left | bottom_center
 
   Future<void> _pickFile() async {
     final files = await FilePicker.pickFiles(
@@ -31,36 +35,81 @@ class _EsignScreenState extends State<EsignScreen> {
     );
 
     if (files.isNotEmpty && files.first.path != null) {
+      final file = File(files.first.path!);
+      try {
+        await PdfEngineService.getPageCount(file);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(PdfEngineService.friendlyError(e))),
+          );
+        }
+        return;
+      }
+      if (!mounted) return;
       setState(() {
-        _selectedFile = File(files.first.path!);
+        _selectedFile = file;
       });
     }
   }
 
-  Future<File> _exportSignatureAsImage() async {
+  Offset _clampToCanvas(Offset p) => Offset(
+        p.dx.clamp(0.0, _canvasSize.width),
+        p.dy.clamp(0.0, _canvasSize.height),
+      );
+
+  /// Mengekspor coretan sebagai PNG transparan beresolusi tinggi yang dipotong
+  /// rapat mengikuti area tanda tangan (tanpa ruang kosong berlebih).
+  /// Mengembalikan (bytes PNG, rasio lebar/tinggi).
+  Future<(Uint8List, double)> _exportSignatureAsImage() async {
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = -double.infinity, maxY = -double.infinity;
+    for (final line in _lines) {
+      for (final p in line) {
+        if (p.dx < minX) minX = p.dx;
+        if (p.dy < minY) minY = p.dy;
+        if (p.dx > maxX) maxX = p.dx;
+        if (p.dy > maxY) maxY = p.dy;
+      }
+    }
+    const pad = 8.0;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+    final w = (maxX - minX).clamp(20.0, 4000.0);
+    final h = (maxY - minY).clamp(20.0, 4000.0);
+    const scale = 3.0; // tajam saat dicetak
+
     final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, 400, 200));
+    final canvas = Canvas(recorder);
+    canvas.scale(scale);
+    canvas.translate(-minX, -minY);
 
     final paint = Paint()
       ..color = _selectedColor
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = 4.0;
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5;
+    final dotPaint = Paint()..color = _selectedColor;
 
     for (final line in _lines) {
-      for (int i = 0; i < line.length - 1; i++) {
-        canvas.drawLine(line[i], line[i + 1], paint);
+      if (line.length == 1) {
+        canvas.drawCircle(line.first, 1.75, dotPaint);
+        continue;
       }
+      final path = Path()..moveTo(line.first.dx, line.first.dy);
+      for (int i = 1; i < line.length; i++) {
+        path.lineTo(line[i].dx, line[i].dy);
+      }
+      canvas.drawPath(path, paint);
     }
 
     final picture = recorder.endRecording();
-    final img = await picture.toImage(400, 200);
-    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-    final buffer = byteData!.buffer.asUint8List();
-
-    final tempDir = await getTemporaryDirectory();
-    final sigFile = File('${tempDir.path}/signature_${DateTime.now().millisecondsSinceEpoch}.png');
-    await sigFile.writeAsBytes(buffer);
-    return sigFile;
+    final image = await picture.toImage((w * scale).round(), (h * scale).round());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return (byteData!.buffer.asUint8List(), w / h);
   }
 
   Future<void> _applySignatureToPdf() async {
@@ -80,40 +129,18 @@ class _EsignScreenState extends State<EsignScreen> {
     ProcessingDialog.show(
       context,
       title: 'Membubuhkan Tanda Tangan',
-      message: 'Menerapkan stempel tanda tangan ke halaman dokumen...',
+      message: 'Menerapkan tanda tangan ke halaman dokumen...',
     );
 
     try {
-      final sigImageFile = await _exportSignatureAsImage();
-      final sigBytes = await sigImageFile.readAsBytes();
-      final pdfBytes = await _selectedFile!.readAsBytes();
-
-      final document = PdfDocument(inputBytes: pdfBytes);
-      final bitmap = PdfBitmap(sigBytes);
-
-      // Bubuhkan tanda tangan di halaman terakhir pada pojok kanan bawah
-      if (document.pages.count > 0) {
-        final lastPage = document.pages[document.pages.count - 1];
-        final pageSize = lastPage.getClientSize();
-        const sigWidth = 150.0;
-        const sigHeight = 75.0;
-
-        lastPage.graphics.drawImage(
-          bitmap,
-          Rect.fromLTWH(
-            pageSize.width - sigWidth - 30,
-            pageSize.height - sigHeight - 40,
-            sigWidth,
-            sigHeight,
-          ),
-        );
-      }
-
-      final savedBytes = await document.save();
-      document.dispose();
-
-      final outputPath = await FileHelper.generateOutputPath('Signed');
-      await File(outputPath).writeAsBytes(savedBytes);
+      final (sigBytes, aspect) = await _exportSignatureAsImage();
+      final outputPath = await PdfEngineService.stampImage(
+        _selectedFile!,
+        sigBytes,
+        imageAspect: aspect,
+        pageMode: _pageMode,
+        position: _position,
+      );
 
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
@@ -145,10 +172,32 @@ class _EsignScreenState extends State<EsignScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menandatangani PDF: $e')),
+          SnackBar(content: Text('Gagal menandatangani PDF: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }
+  }
+
+  Widget _buildChoiceChips(String label, Map<String, String> options, String value, ValueChanged<String> onChanged) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: options.entries
+              .map((e) => ChoiceChip(
+                    label: Text(e.value),
+                    selected: value == e.key,
+                    selectedColor: AppColors.editPurple.withValues(alpha: 0.18),
+                    onSelected: (_) => onChanged(e.key),
+                  ))
+              .toList(),
+        ),
+      ],
+    );
   }
 
   @override
@@ -158,6 +207,9 @@ class _EsignScreenState extends State<EsignScreen> {
         title: const Text('Tanda Tangani PDF (e-Sign)', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       body: SingleChildScrollView(
+        // Kunci scroll saat jari menyentuh kanvas agar coretan vertikal tidak
+        // berubah menjadi gerakan menggulir halaman.
+        physics: _isDrawing ? const NeverScrollableScrollPhysics() : null,
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -220,22 +272,41 @@ class _EsignScreenState extends State<EsignScreen> {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.cardBorder, width: 1.5),
               ),
-              child: GestureDetector(
-                onPanStart: (details) {
-                  setState(() {
-                    _lines.add([details.localPosition]);
-                  });
-                },
-                onPanUpdate: (details) {
-                  setState(() {
-                    if (_lines.isNotEmpty) {
-                      _lines.last.add(details.localPosition);
-                    }
-                  });
-                },
-                child: CustomPaint(
-                  painter: _SignaturePainter(lines: _lines, color: _selectedColor),
-                  size: Size.infinite,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    _canvasSize = Size(constraints.maxWidth, constraints.maxHeight);
+                    return Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: (event) {
+                        setState(() {
+                          _isDrawing = true;
+                          _lines.add([_clampToCanvas(event.localPosition)]);
+                        });
+                      },
+                      onPointerMove: (event) {
+                        if (_lines.isEmpty) return;
+                        setState(() {
+                          _lines.last.add(_clampToCanvas(event.localPosition));
+                        });
+                      },
+                      onPointerUp: (_) => setState(() => _isDrawing = false),
+                      onPointerCancel: (_) => setState(() => _isDrawing = false),
+                      child: CustomPaint(
+                        painter: _SignaturePainter(lines: _lines, color: _selectedColor),
+                        size: Size.infinite,
+                        child: _lines.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  'Tanda tangan di sini',
+                                  style: TextStyle(color: AppColors.textMuted),
+                                ),
+                              )
+                            : null,
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -248,6 +319,20 @@ class _EsignScreenState extends State<EsignScreen> {
                 _buildColorDot(const Color(0xFF0D47A1)),
                 _buildColorDot(const Color(0xFFB71C1C)),
               ],
+            ),
+            const SizedBox(height: 20),
+            _buildChoiceChips(
+              'Halaman:',
+              const {'last': 'Halaman terakhir', 'first': 'Halaman pertama', 'all': 'Semua halaman'},
+              _pageMode,
+              (v) => setState(() => _pageMode = v),
+            ),
+            const SizedBox(height: 16),
+            _buildChoiceChips(
+              'Posisi:',
+              const {'bottom_right': 'Kanan bawah', 'bottom_center': 'Tengah bawah', 'bottom_left': 'Kiri bawah'},
+              _position,
+              (v) => setState(() => _position = v),
             ),
             const SizedBox(height: 32),
             SizedBox(
@@ -303,6 +388,10 @@ class _SignaturePainter extends CustomPainter {
       ..strokeWidth = 3.5;
 
     for (final line in lines) {
+      if (line.length == 1) {
+        canvas.drawCircle(line.first, 1.75, Paint()..color = color);
+        continue;
+      }
       for (int i = 0; i < line.length - 1; i++) {
         canvas.drawLine(line[i], line[i + 1], paint);
       }

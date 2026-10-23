@@ -7,6 +7,7 @@ import '../../core/services/pdf_engine_service.dart';
 import '../../core/services/recent_files_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/file_helper.dart';
+import '../../core/utils/text_diff.dart';
 import '../../models/processed_file.dart';
 import '../../widgets/processing_dialog.dart';
 import '../viewer/pdf_viewer_screen.dart';
@@ -26,6 +27,7 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
   int _pagesB = 0;
   int _wordsA = 0;
   int _wordsB = 0;
+  DiffResult? _diff;
 
   Future<void> _pickFile(bool isFileA) async {
     final files = await FilePicker.pickFiles(
@@ -55,23 +57,17 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
     );
 
     try {
-      final bytesA = await _fileA!.readAsBytes();
-      final bytesB = await _fileB!.readAsBytes();
-
-      final docA = PdfDocument(inputBytes: bytesA);
-      final docB = PdfDocument(inputBytes: bytesB);
-
-      _pagesA = docA.pages.count;
-      _pagesB = docB.pages.count;
-
-      docA.dispose();
-      docB.dispose();
+      _pagesA = await PdfEngineService.getPageCount(_fileA!);
+      _pagesB = await PdfEngineService.getPageCount(_fileB!);
 
       final textA = await PdfEngineService.extractText(_fileA!);
       final textB = await PdfEngineService.extractText(_fileB!);
 
       _wordsA = textA.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
       _wordsB = textB.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+
+      final textDiff = await TextDiff.compareInBackground(textA, textB);
+      _diff = textDiff;
 
       final diff = _wordsB - _wordsA;
 
@@ -103,6 +99,25 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
         buffer.writeln('• Konten Kata: Jumlah kata relatif identik.');
       }
 
+      buffer.writeln('• Kemiripan isi: ${textDiff.similarityPercent}%');
+      buffer.writeln('• Baris ditambahkan di B: ${textDiff.added}');
+      buffer.writeln('• Baris dihapus dari A: ${textDiff.removed}');
+      if (textDiff.truncated) {
+        buffer.writeln('• Catatan: hanya ${TextDiff.maxLines} baris pertama yang dibandingkan.');
+      }
+      if (textDiff.added + textDiff.removed > 0) {
+        buffer.writeln('\nDETAIL PERUBAHAN:');
+        var shown = 0;
+        for (final line in textDiff.lines) {
+          if (line.type == DiffType.same) continue;
+          buffer.writeln('${line.type == DiffType.added ? '+ ' : '- '}${line.text}');
+          if (++shown >= 200) {
+            buffer.writeln('... (perubahan lainnya dipotong)');
+            break;
+          }
+        }
+      }
+
       if (mounted) {
         ProcessingDialog.hide(context);
         setState(() {
@@ -113,7 +128,7 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal membandingkan berkas: $e')),
+          SnackBar(content: Text('Gagal membandingkan berkas: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }
@@ -186,6 +201,10 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
       final diffPages = _pagesB - _pagesA;
       final diffWords = _wordsB - _wordsA;
       addRow('Selisih Halaman', '-', diffPages == 0 ? 'Sama' : '$diffPages Halaman');
+      if (_diff != null) {
+        addRow('Kemiripan Isi', '-', '${_diff!.similarityPercent}%');
+        addRow('Baris Ditambah / Dihapus', '-', '+${_diff!.added} / -${_diff!.removed}');
+      }
       addRow('Selisih Kata', '-', diffWords == 0 ? 'Identik' : '${diffWords > 0 ? "+$diffWords" : "$diffWords"} kata');
 
       grid.style = PdfGridStyle(
@@ -251,7 +270,7 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
       if (mounted) {
         ProcessingDialog.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal membuat dokumen laporan: $e')),
+          SnackBar(content: Text('Gagal membuat dokumen laporan: ${PdfEngineService.friendlyError(e)}')),
         );
       }
     }
@@ -270,7 +289,7 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
           children: [
             const Text('Pilih Dua Dokumen PDF untuk Dibandingkan', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            const Text('Sistem akan menganalisis perbedaan struktur, jumlah halaman, dan volume kata.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            const Text('Sistem membandingkan isi teks baris demi baris: bagian yang ditambah, dihapus, serta jumlah halaman dan kata.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             const SizedBox(height: 20),
 
             // File A Card
@@ -320,9 +339,16 @@ class _ComparePdfScreenState extends State<ComparePdfScreen> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: AppColors.cardBorder),
                 ),
-                child: SelectableText(
-                  _analysisSummary,
-                  style: const TextStyle(fontSize: 13, height: 1.6, fontFamily: 'monospace'),
+                child: SelectableText.rich(
+                  TextSpan(
+                    style: const TextStyle(fontSize: 13, height: 1.6, fontFamily: 'monospace', color: AppColors.textPrimary),
+                    children: _analysisSummary.split('\n').map((line) {
+                      Color? bg;
+                      if (line.startsWith('+ ')) bg = const Color(0xFFDCFCE7);
+                      if (line.startsWith('- ')) bg = const Color(0xFFFEE2E2);
+                      return TextSpan(text: '$line\n', style: TextStyle(backgroundColor: bg));
+                    }).toList(),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
