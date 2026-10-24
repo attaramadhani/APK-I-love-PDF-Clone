@@ -473,6 +473,21 @@ class RecentFilesScreenState extends State<RecentFilesScreen> {
                           ),
                         );
                       } else if (action == 'delete') {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Hapus berkas?'),
+                            content: Text('"${file.name}" akan dihapus permanen dari aplikasi.'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Hapus', style: TextStyle(color: Colors.redAccent)),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm != true) return;
                         await RecentFilesService.removeFile(file.id);
                         if (File(file.path).existsSync()) {
                           try {

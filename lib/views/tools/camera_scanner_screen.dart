@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/services/pdf_engine_service.dart';
@@ -21,20 +23,70 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
   final List<File> _scannedPages = [];
   final ImagePicker _picker = ImagePicker();
 
+  bool _isScanning = false;
+
   @override
   void initState() {
     super.initState();
-    // Buka kamera secara otomatis saat pertama kali dibuka
+    // Buka pemindai otomatis saat layar pertama kali dibuka
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _capturePage();
+      _smartScan();
     });
   }
 
+  /// Pemindai pintar Google ML Kit Document Scanner:
+  /// mendeteksi tepi dokumen secara otomatis, meluruskan perspektif (kertas
+  /// yang difoto miring jadi persegi), memotong latar belakang, menghapus
+  /// bayangan/noda, dan mendukung banyak halaman sekaligus. Berjalan di
+  /// perangkat (offline) melalui Google Play Services.
+  Future<void> _smartScan() async {
+    if (_isScanning) return;
+    _isScanning = true;
+    final scanner = DocumentScanner(
+      options: DocumentScannerOptions(
+        documentFormats: const {DocumentFormat.jpeg},
+        mode: ScannerMode.full,
+        pageLimit: 50,
+        isGalleryImport: true,
+      ),
+    );
+    try {
+      final result = await scanner.scanDocument();
+      if (!mounted) return;
+      final images = result.images ?? const <String>[];
+      if (images.isNotEmpty) {
+        setState(() {
+          _scannedPages.addAll(images.map((path) => File(path)));
+        });
+      }
+    } on PlatformException catch (e) {
+      final msg = (e.message ?? '').toLowerCase();
+      if (msg.contains('cancel')) return; // pengguna menutup pemindai
+      if (!mounted) return;
+      // Perangkat tanpa Google Play Services / tidak didukung -> kamera biasa
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pemindai otomatis tidak tersedia di perangkat ini. Menggunakan kamera biasa.'),
+        ),
+      );
+      await _capturePage();
+    } catch (_) {
+      if (mounted) await _capturePage();
+    } finally {
+      _isScanning = false;
+      await scanner.close();
+    }
+  }
+
+  /// Kamera biasa (tanpa deteksi tepi) — cadangan bila pemindai pintar tidak tersedia.
   Future<void> _capturePage() async {
     final photo = await _picker.pickImage(
       source: ImageSource.camera,
       imageQuality: 92,
+      maxWidth: 2400,
+      maxHeight: 2400,
     );
+    if (!mounted) return;
 
     if (photo != null) {
       setState(() {
@@ -46,7 +98,10 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
   Future<void> _pickFromGallery() async {
     final images = await _picker.pickMultiImage(
       imageQuality: 92,
+      maxWidth: 2400,
+      maxHeight: 2400,
     );
+    if (!mounted) return;
 
     if (images.isNotEmpty) {
       setState(() {
@@ -65,7 +120,7 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
     );
 
     try {
-      final outputPath = await ImagePdfService.imagesToPdf(_scannedPages);
+      final outputPath = await ImagePdfService.imagesToPdf(_scannedPages, margin: 8);
       final outputFile = File(outputPath);
       final fileSize = await outputFile.length();
 
@@ -115,9 +170,9 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
               tooltip: 'Impor dari Galeri',
             ),
             TextButton.icon(
-              onPressed: _capturePage,
-              icon: const Icon(Icons.add_a_photo_rounded, size: 18),
-              label: const Text('Kamera'),
+              onPressed: _smartScan,
+              icon: const Icon(Icons.document_scanner_rounded, size: 18),
+              label: const Text('Pindai'),
             ),
           ],
         ],
@@ -138,7 +193,7 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Ambil foto dokumen fisik dengan kamera atau pilih pindaian yang tersimpan di galeri.',
+                      'Arahkan kamera ke dokumen: tepi kertas terdeteksi otomatis, diluruskan, dan dipotong rapi seperti hasil mesin scanner.',
                       style: TextStyle(color: AppColors.textSecondary),
                       textAlign: TextAlign.center,
                     ),
@@ -146,12 +201,25 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _capturePage,
-                        icon: const Icon(Icons.camera_alt_rounded),
-                        label: const Text('Buka Kamera Pemindai'),
+                        onPressed: _smartScan,
+                        icon: const Icon(Icons.document_scanner_rounded),
+                        label: const Text('Pindai Otomatis (Deteksi Tepi)'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.organizeOrange,
                           padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _capturePage,
+                        icon: const Icon(Icons.camera_alt_rounded, color: AppColors.organizeOrange),
+                        label: const Text('Kamera Biasa (tanpa deteksi tepi)'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: const BorderSide(color: AppColors.organizeOrange),
                         ),
                       ),
                     ),
@@ -184,9 +252,9 @@ class _CameraScannerScreenState extends State<CameraScannerScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.camera_alt_rounded, color: AppColors.organizeOrange),
-                        tooltip: 'Foto Halaman Tambahan',
-                        onPressed: _capturePage,
+                        icon: const Icon(Icons.document_scanner_rounded, color: AppColors.organizeOrange),
+                        tooltip: 'Pindai Halaman Tambahan',
+                        onPressed: _smartScan,
                       ),
                     ],
                   ),

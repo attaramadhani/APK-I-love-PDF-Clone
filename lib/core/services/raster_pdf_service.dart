@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import '../utils/file_helper.dart';
 import 'pdf_engine_service.dart';
@@ -19,6 +20,11 @@ typedef RedactionBuilder = List<Rect> Function(int pageIndex, Size pageSize);
 /// * OCR: menghasilkan gambar halaman untuk dibaca ML Kit.
 class RasterPdfService {
   /// Mengubah piksel RGBA hasil render menjadi JPEG berlatar putih.
+  ///
+  /// Renderer Android (PdfRenderer) menghasilkan piksel RGBA *premultiplied*
+  /// dengan latar transparan, sehingga warna di atas kertas putih cukup
+  /// dihitung `c + (255 - alpha)`. Perulangan typed-data ini jauh lebih cepat
+  /// daripada compositeImage per piksel.
   static Uint8List _encodeJpeg(
     Uint8List rgba,
     int width,
@@ -26,26 +32,35 @@ class RasterPdfService {
     int quality,
     List<List<int>> blackBoxes,
   ) {
-    final src = img.Image.fromBytes(
+    final int pixelCount = width * height;
+    final Uint8List rgb = Uint8List(pixelCount * 3);
+    for (int i = 0, j = 0; i < pixelCount; i++, j += 3) {
+      final int s = i * 4;
+      final int inv = 255 - rgba[s + 3];
+      final int r = rgba[s] + inv;
+      final int g = rgba[s + 1] + inv;
+      final int b = rgba[s + 2] + inv;
+      rgb[j] = r > 255 ? 255 : r;
+      rgb[j + 1] = g > 255 ? 255 : g;
+      rgb[j + 2] = b > 255 ? 255 : b;
+    }
+    // Bakar kotak sensor langsung ke piksel (permanen).
+    for (final box in blackBoxes) {
+      final x1 = box[0], y1 = box[1], x2 = box[2], y2 = box[3];
+      if (x2 < x1 || y2 < y1) continue;
+      for (int y = y1; y <= y2; y++) {
+        final int rowStart = (y * width + x1) * 3;
+        final int rowEnd = (y * width + x2) * 3 + 3;
+        rgb.fillRange(rowStart, rowEnd, 0);
+      }
+    }
+    final image = img.Image.fromBytes(
       width: width,
       height: height,
-      bytes: rgba.buffer,
-      numChannels: 4,
+      bytes: rgb.buffer,
+      numChannels: 3,
     );
-    final canvas = img.Image(width: width, height: height);
-    img.fill(canvas, color: img.ColorRgb8(255, 255, 255));
-    img.compositeImage(canvas, src);
-    for (final b in blackBoxes) {
-      img.fillRect(
-        canvas,
-        x1: b[0],
-        y1: b[1],
-        x2: b[2],
-        y2: b[3],
-        color: img.ColorRgb8(0, 0, 0),
-      );
-    }
-    return img.encodeJpg(canvas, quality: quality);
+    return img.encodeJpg(image, quality: quality);
   }
 
   static Future<Uint8List> _encodeInBackground(
@@ -118,7 +133,8 @@ class RasterPdfService {
   /// Mengembalikan daftar path gambar sesuai urutan halaman.
   static Stream<String> renderPagesToTempPng(File file, {double dpi = 200}) async* {
     final Uint8List pdfBytes = await file.readAsBytes();
-    final tempDir = await Directory.systemTemp.createTemp('ocr_');
+    final cacheDir = await getTemporaryDirectory();
+    final tempDir = await Directory('${cacheDir.path}/ocr_pages').create(recursive: true);
     int index = 0;
     await for (final raster in Printing.raster(pdfBytes, dpi: dpi)) {
       final pixels = Uint8List.fromList(raster.pixels);

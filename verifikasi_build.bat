@@ -16,8 +16,8 @@ echo ==== flutter build apk --release ==== >> %LOG%
 call flutter build apk --release >> %LOG% 2>&1
 echo BUILD_EXIT=%errorlevel% >> %LOG%
 if exist build\app\outputs\flutter-apk\app-release.apk (
-  copy /y build\app\outputs\flutter-apk\app-release.apk PDF_Studio_Pro_v1.1.apk >nul
-  echo APK_OK=PDF_Studio_Pro_v1.1.apk >> %LOG%
+  copy /y build\app\outputs\flutter-apk\app-release.apk PDF_Studio_Pro_v1.2.apk >nul
+  echo APK_OK=PDF_Studio_Pro_v1.2.apk >> %LOG%
 )
 echo ==== SELESAI ==== >> %LOG%
 echo Selesai. Lihat verifikasi_log.txt

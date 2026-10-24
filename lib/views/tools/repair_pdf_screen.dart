@@ -25,6 +25,7 @@ class _RepairPdfScreenState extends State<RepairPdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       setState(() {

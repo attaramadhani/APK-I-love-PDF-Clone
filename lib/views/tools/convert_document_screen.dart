@@ -41,6 +41,7 @@ class _ConvertDocumentScreenState extends State<ConvertDocumentScreen> {
       type: FileType.custom,
       allowedExtensions: _allowedExtensions,
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       setState(() {

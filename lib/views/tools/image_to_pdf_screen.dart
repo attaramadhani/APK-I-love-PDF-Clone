@@ -24,7 +24,8 @@ class _ImageToPdfScreenState extends State<ImageToPdfScreen> {
   double _margin = 20.0;
 
   Future<void> _pickImages() async {
-    final pickedFiles = await _picker.pickMultiImage();
+    final pickedFiles = await _picker.pickMultiImage(maxWidth: 2400, maxHeight: 2400, imageQuality: 92);
+    if (!mounted) return;
     if (pickedFiles.isNotEmpty) {
       setState(() {
         for (final xfile in pickedFiles) {

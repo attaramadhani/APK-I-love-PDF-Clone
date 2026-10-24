@@ -25,6 +25,7 @@ class _MergePdfScreenState extends State<MergePdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty) {
       setState(() {

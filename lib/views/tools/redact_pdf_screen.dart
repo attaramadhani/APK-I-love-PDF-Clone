@@ -35,6 +35,7 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);
@@ -92,6 +93,7 @@ class _RedactPdfScreenState extends State<RedactPdfScreen> {
         prefix: 'Redacted',
         dpi: 170,
         jpegQuality: 88,
+            onProgress: (done, total) => ProcessingDialog.updateProgress('Halaman $done dari $total'),
         redactions: (pageIndex, size) {
           switch (option) {
             case 0:

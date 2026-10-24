@@ -11,6 +11,13 @@ class ProcessingDialog extends StatelessWidget {
     this.message = 'Mohon tunggu sebentar...',
   });
 
+  /// Teks progres opsional (mis. "Halaman 3 dari 10") yang bisa diperbarui
+  /// selama proses berjalan lewat [updateProgress].
+  static final ValueNotifier<String> _progress = ValueNotifier<String>('');
+
+  /// Memperbarui teks progres pada dialog yang sedang tampil.
+  static void updateProgress(String text) => _progress.value = text;
+
   static bool _isShowing = false;
   static int _token = 0;
 
@@ -18,6 +25,7 @@ class ProcessingDialog extends StatelessWidget {
   static void show(BuildContext context, {required String title, String? message}) {
     if (_isShowing) return;
     _isShowing = true;
+    _progress.value = '';
     final myToken = ++_token;
     showDialog(
       context: context,
@@ -81,6 +89,22 @@ class ProcessingDialog extends StatelessWidget {
                 color: AppColors.textSecondary,
               ),
               textAlign: TextAlign.center,
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: _progress,
+              builder: (context, value, _) => value.isEmpty
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primaryBlue,
+                        ),
+                      ),
+                    ),
             ),
           ],
         ),

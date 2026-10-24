@@ -1,4 +1,6 @@
+import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:ilovepdf_mobile/core/services/document_convert_service.dart';
 import 'package:ilovepdf_mobile/core/services/pdf_engine_service.dart';
 import 'package:ilovepdf_mobile/core/utils/page_range_parser.dart';
@@ -57,5 +59,55 @@ void main() {
   test('PdfEngineService.friendlyError menerjemahkan galat umum', () {
     expect(PdfEngineService.friendlyError(Exception('Invalid password')), contains('kata sandi'));
     expect(PdfEngineService.friendlyError(const PdfOpenException('Pesan khusus')), 'Pesan khusus');
+  });
+
+  group('PdfEngineService (perilaku Syncfusion)', () {
+    PdfDocument reload(PdfDocument doc, {String? password}) {
+      final bytes = doc.saveSync();
+      doc.dispose();
+      return password == null
+          ? PdfDocument(inputBytes: bytes)
+          : PdfDocument(inputBytes: bytes, password: password);
+    }
+
+    test('halaman landscape tetap landscape setelah disalin', () {
+      final out = PdfDocument();
+      PdfEngineService.addPage(out, const Size(842, 595));
+      final loaded = reload(out);
+      expect(loaded.pages[0].size.width, closeTo(842, 0.5));
+      expect(loaded.pages[0].size.height, closeTo(595, 0.5));
+      loaded.dispose();
+    });
+
+    test('rotasi asli + rotasi tambahan diterapkan pada halaman baru', () {
+      final src = PdfDocument();
+      src.pageSettings.rotate = PdfPageRotateAngle.rotateAngle90;
+      src.pages.add();
+      final source = reload(src);
+      expect(source.pages[0].rotation, PdfPageRotateAngle.rotateAngle90);
+
+      final out = PdfDocument();
+      PdfEngineService.copyPage(out, source.pages[0], extraRotation: 90);
+      final result = reload(out);
+      expect(result.pages[0].rotation, PdfPageRotateAngle.rotateAngle180);
+      result.dispose();
+      source.dispose();
+    });
+
+    test('buka kunci benar-benar menghapus enkripsi', () {
+      final doc = PdfDocument();
+      doc.pages.add();
+      doc.security.userPassword = 'rahasia';
+      doc.security.ownerPassword = 'rahasia';
+      final locked = reload(doc, password: 'rahasia');
+      PdfEngineService.removeSecurity(locked);
+      final bytes = locked.saveSync();
+      locked.dispose();
+      // Harus bisa dibuka TANPA kata sandi
+      final unlocked = PdfDocument(inputBytes: bytes);
+      expect(unlocked.pages.count, 1);
+      unlocked.dispose();
+      expect(String.fromCharCodes(bytes).contains('/Encrypt'), isFalse);
+    });
   });
 }

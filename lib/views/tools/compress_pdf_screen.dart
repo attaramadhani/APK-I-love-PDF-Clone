@@ -27,6 +27,7 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       setState(() {
@@ -63,6 +64,7 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
             prefix: 'Compressed',
             dpi: dpi,
             jpegQuality: quality,
+            onProgress: (done, total) => ProcessingDialog.updateProgress('Halaman $done dari $total'),
           );
           final rasterSize = File(rasterPath).lengthSync();
           // Untuk Rekomendasi, hanya ganti ke versi gambar bila hematnya signifikan

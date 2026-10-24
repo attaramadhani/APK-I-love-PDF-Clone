@@ -32,6 +32,7 @@ class _CropPdfScreenState extends State<CropPdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);

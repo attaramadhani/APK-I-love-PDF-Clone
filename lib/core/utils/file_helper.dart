@@ -29,11 +29,26 @@ class FileHelper {
     return outputDir.path;
   }
 
+  /// Membuat path output unik. Bila nama dengan detik yang sama sudah ada
+  /// (mis. dua proses dalam satu detik), ditambahkan akhiran _2, _3, dst.
+  /// agar hasil sebelumnya tidak pernah tertimpa.
   static Future<String> generateOutputPath(String prefix, [String ext = '.pdf']) async {
     final dirPath = await getAppOutputDirectory();
     final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    return p.join(dirPath, '${prefix}_$timestamp$ext');
+    var candidate = p.join(dirPath, '${prefix}_$timestamp$ext');
+    var n = 2;
+    while (await File(candidate).exists() || _reservedPaths.contains(candidate)) {
+      candidate = p.join(dirPath, '${prefix}_${timestamp}_$n$ext');
+      n++;
+    }
+    _reservedPaths.add(candidate);
+    if (_reservedPaths.length > 500) _reservedPaths.remove(_reservedPaths.first);
+    return candidate;
   }
+
+  /// Path yang sudah dibagikan tetapi mungkin belum ditulis ke disk
+  /// (mis. split membuat banyak path sebelum proses berjalan).
+  static final Set<String> _reservedPaths = <String>{};
 
   /// MIME type berdasarkan ekstensi berkas.
   static String mimeTypeFor(String fileName) {

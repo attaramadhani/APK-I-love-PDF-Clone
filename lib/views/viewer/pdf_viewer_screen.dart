@@ -9,10 +9,14 @@ class PdfViewerScreen extends StatefulWidget {
   final String filePath;
   final String title;
 
+  /// Kata sandi untuk membuka PDF terenkripsi (mis. hasil alat Proteksi PDF).
+  final String? password;
+
   const PdfViewerScreen({
     super.key,
     required this.filePath,
     required this.title,
+    this.password,
   });
 
   @override
@@ -171,6 +175,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           children: [
             PDFView(
               filePath: widget.filePath,
+              password: widget.password,
               enableSwipe: true,
               swipeHorizontal: false,
               autoSpacing: true,
@@ -181,17 +186,20 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               nightMode: false,
               backgroundColor: Colors.white,
               onRender: (pages) {
+              if (!mounted) return;
               setState(() {
                 _totalPages = pages ?? 0;
                 _isReady = true;
               });
             },
             onError: (error) {
+              if (!mounted) return;
               setState(() {
                 _errorMessage = error.toString();
               });
             },
             onPageError: (page, error) {
+              if (!mounted) return;
               setState(() {
                 _errorMessage = '$page: ${error.toString()}';
               });
@@ -200,6 +208,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               _pdfViewController = pdfViewController;
             },
             onPageChanged: (int? page, int? total) {
+              if (!mounted) return;
               setState(() {
                 _currentPage = page ?? 0;
               });

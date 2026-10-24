@@ -19,7 +19,7 @@ class WatermarkScreen extends StatefulWidget {
 
 class _WatermarkScreenState extends State<WatermarkScreen> {
   File? _selectedFile;
-  final TextEditingController _textController = TextEditingController(text: 'iLovePDF');
+  final TextEditingController _textController = TextEditingController(text: 'RAHASIA');
   double _opacity = 0.3;
   double _angle = 45;
 
@@ -28,6 +28,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       setState(() {

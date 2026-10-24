@@ -29,6 +29,7 @@ class _ProtectPdfScreenState extends State<ProtectPdfScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       setState(() {
@@ -83,6 +84,8 @@ class _ProtectPdfScreenState extends State<ProtectPdfScreen> {
             builder: (ctx) => PdfViewerScreen(
               filePath: outputPath,
               title: processedFile.name,
+              // PDF hasil proteksi terenkripsi: penampil perlu sandinya.
+              password: widget.isUnlockMode ? null : password,
             ),
           ),
         );

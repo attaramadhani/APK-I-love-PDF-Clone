@@ -28,6 +28,7 @@ class _PageNumberScreenState extends State<PageNumberScreen> {
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
+    if (!mounted) return;
 
     if (files.isNotEmpty && files.first.path != null) {
       final file = File(files.first.path!);

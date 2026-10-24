@@ -11,7 +11,7 @@ Aplikasi Mobile Pengolah Dokumen PDF Komprehensif berbasis **Flutter** dengan 25
 - **Pisahkan PDF (`split`)**: Ekstrak setiap halaman menjadi file PDF terpisah atau pisahkan berdasarkan rentang halaman kustom (multi-file split).
 - **Atur Halaman (`organize_pages`)**: Pindahkan urutan halaman, putar rotasi 90°, atau hapus halaman tertentu dengan pratinjau visual.
 - **Hapus Halaman (`remove_pages`)**: Hapus nomor atau rentang halaman tertentu secara presisi.
-- **Pindai ke PDF (`scan_pdf`)**: Pindai dokumen fisik melalui kamera ponsel atau impor dari galeri langsung menjadi dokumen PDF multi-halaman.
+- **Pindai ke PDF (`scan_pdf`)**: Pemindai pintar Google ML Kit — tepi kertas terdeteksi otomatis, perspektif diluruskan, latar dipotong, bayangan dibersihkan, multi-halaman. Otomatis beralih ke kamera biasa di perangkat tanpa Google Play Services.
 
 ### 2. ⚡ Optimalkan Dokumen (Optimize)
 - **Kompres PDF (`compress`)**: Ringan (optimasi struktur, teks tetap bisa dicari), Rekomendasi (144 DPI) & Maksimal (96 DPI) yang benar-benar mengecilkan PDF hasil scan/foto. Hasil terkecil dipilih otomatis — file tidak pernah membesar.
@@ -45,6 +45,13 @@ Aplikasi Mobile Pengolah Dokumen PDF Komprehensif berbasis **Flutter** dengan 25
 - **PDF ke Markdown (`ai_markdown`)**: Ekstrak struktur heading, list, dan tabel menjadi format Markdown (`.md`).
 
 ---
+
+## 🆕 Perubahan v1.2.0
+
+- **Pindai dengan deteksi tepi otomatis** (Google ML Kit Document Scanner).
+- **Bug diperbaiki**: halaman landscape berubah jadi potret & terpotong saat digabung/dipisah/disusun/dipotong/dikompres; rotasi per halaman di "Atur Halaman" tidak pernah tersimpan; "Buka Kunci PDF" ternyata masih menghasilkan PDF terenkripsi; PDF hasil "Proteksi" gagal dibuka di penampil; nama file output bisa bentrok sehingga hasil Kompres bisa hilang.
+- **Lebih cepat**: render halaman (Kompres, Sensor, OCR) ~10x lebih cepat, dialog menampilkan progres per halaman.
+- Konfirmasi sebelum menghapus berkas di Riwayat; unit test baru untuk perilaku Syncfusion di atas.
 
 ## 🆕 Perubahan v1.1.0
 

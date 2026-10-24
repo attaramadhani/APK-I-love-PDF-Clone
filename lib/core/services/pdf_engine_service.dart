@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../utils/file_helper.dart';
 
@@ -93,22 +94,58 @@ class PdfEngineService {
     });
   }
 
-  /// Menyalin satu halaman sumber ke dokumen tujuan sebagai template vektor
-  /// dengan kanvas putih (mencegah latar hitam pada halaman transparan).
-  static void _copyPage(PdfDocument target, PdfPage sourcePage) {
-    final Size size = sourcePage.size;
+  /// Menyiapkan section baru dengan ukuran & rotasi yang benar.
+  ///
+  /// PENTING (perilaku Syncfusion):
+  /// * `pageSettings.size` selalu dipaksa potret kecuali `orientation` diatur
+  ///   ke landscape lebih dulu — tanpa ini halaman landscape menjadi potret
+  ///   dan isinya terpotong.
+  /// * `PdfPage.rotation` diabaikan untuk halaman baru; rotasi harus diatur
+  ///   lewat `pageSettings.rotate` SEBELUM halaman ditambahkan.
+  @visibleForTesting
+  static PdfPage addPage(
+    PdfDocument target,
+    Size size, {
+    PdfPageRotateAngle rotation = PdfPageRotateAngle.rotateAngle0,
+  }) {
     final PdfSection section = target.sections!.add();
+    section.pageSettings.orientation =
+        size.width > size.height ? PdfPageOrientation.landscape : PdfPageOrientation.portrait;
     section.pageSettings.size = size;
     section.pageSettings.margins.all = 0;
-    final PdfPage newPage = section.pages.add();
+    if (rotation != PdfPageRotateAngle.rotateAngle0) {
+      section.pageSettings.rotate = rotation;
+    }
+    return section.pages.add();
+  }
+
+  /// Menyalin satu halaman sumber ke dokumen tujuan sebagai template vektor
+  /// dengan kanvas putih (mencegah latar hitam pada halaman transparan).
+  /// Rotasi asli dipertahankan, ditambah [extraRotation] derajat bila ada.
+  @visibleForTesting
+  static void copyPage(PdfDocument target, PdfPage sourcePage, {int extraRotation = 0}) {
+    final Size size = sourcePage.size;
+    final PdfPage newPage = addPage(
+      target,
+      size,
+      rotation: _degreesToAngle(_angleToDegrees(sourcePage.rotation) + extraRotation),
+    );
     newPage.graphics.drawRectangle(
       brush: PdfSolidBrush(PdfColor(255, 255, 255)),
       bounds: Rect.fromLTWH(0, 0, size.width, size.height),
     );
     final PdfTemplate template = sourcePage.createTemplate();
     newPage.graphics.drawPdfTemplate(template, Offset.zero, size);
-    // Pertahankan orientasi asli halaman (sebelumnya rotasi hilang saat digabung/dipisah).
-    newPage.rotation = sourcePage.rotation;
+  }
+
+  /// Melepas seluruh enkripsi dokumen. Syncfusion baru benar-benar menghapus
+  /// enkripsi bila kedua sandi kosong DAN daftar izin dikosongkan; tanpa
+  /// `permissions.clear()` hasil "buka kunci" ternyata tetap terenkripsi.
+  @visibleForTesting
+  static void removeSecurity(PdfDocument doc) {
+    doc.security.userPassword = '';
+    doc.security.ownerPassword = '';
+    doc.security.permissions.clear();
   }
 
   static String _baseName(File file) {
@@ -140,7 +177,7 @@ class PdfEngineService {
         final sourceDoc = _open(File(path).readAsBytesSync());
         sources.add(sourceDoc);
         for (int i = 0; i < sourceDoc.pages.count; i++) {
-          _copyPage(outputDoc, sourceDoc.pages[i]);
+          copyPage(outputDoc, sourceDoc.pages[i]);
         }
       }
       // Dokumen sumber baru di-dispose SETELAH disimpan, karena template
@@ -192,7 +229,7 @@ class PdfEngineService {
         try {
           for (final index in ranges[i]) {
             if (index >= 0 && index < sourceDoc.pages.count) {
-              _copyPage(splitDoc, sourceDoc.pages[index]);
+              copyPage(splitDoc, sourceDoc.pages[index]);
             }
           }
           if (splitDoc.pages.count == 0) {
@@ -430,8 +467,7 @@ class PdfEngineService {
     await Isolate.run(() async {
       final doc = _open(File(path).readAsBytesSync(), password: password);
       try {
-        doc.security.userPassword = '';
-        doc.security.ownerPassword = '';
+        removeSecurity(doc);
         final List<int> savedBytes = await doc.save();
         File(outputPath).writeAsBytesSync(savedBytes);
       } finally {
@@ -508,10 +544,7 @@ class PdfEngineService {
         doc.compressionLevel = PdfCompressionLevel.best;
         for (int i = 0; i < jpegPages.length; i++) {
           final size = pageSizes[i];
-          final section = doc.sections!.add();
-          section.pageSettings.size = size;
-          section.pageSettings.margins.all = 0;
-          final page = section.pages.add();
+          final page = addPage(doc, size);
           page.graphics.drawImage(
             PdfBitmap(jpegPages[i]),
             Rect.fromLTWH(0, 0, size.width, size.height),
@@ -546,16 +579,12 @@ class PdfEngineService {
           final orig = sourcePage.size;
           final w = (orig.width - left - right).clamp(50.0, orig.width);
           final h = (orig.height - top - bottom).clamp(50.0, orig.height);
-          final section = output.sections!.add();
-          section.pageSettings.size = Size(w, h);
-          section.pageSettings.margins.all = 0;
-          final newPage = section.pages.add();
+          final newPage = addPage(output, Size(w, h), rotation: sourcePage.rotation);
           newPage.graphics.drawRectangle(
             brush: PdfSolidBrush(PdfColor(255, 255, 255)),
             bounds: Rect.fromLTWH(0, 0, w, h),
           );
           newPage.graphics.drawPdfTemplate(sourcePage.createTemplate(), Offset(-left, -top), orig);
-          newPage.rotation = sourcePage.rotation;
         }
         final List<int> savedBytes = await output.save();
         File(outputPath).writeAsBytesSync(savedBytes);
@@ -588,10 +617,7 @@ class PdfEngineService {
         for (int i = 0; i < order.length; i++) {
           final idx = order[i];
           if (idx < 0 || idx >= source.pages.count) continue;
-          final sourcePage = source.pages[idx];
-          _copyPage(output, sourcePage);
-          final newPage = output.pages[output.pages.count - 1];
-          newPage.rotation = _degreesToAngle(_angleToDegrees(sourcePage.rotation) + extraRotations[i]);
+          copyPage(output, source.pages[idx], extraRotation: extraRotations[i]);
         }
         final List<int> savedBytes = await output.save();
         File(outputPath).writeAsBytesSync(savedBytes);
